@@ -1,2 +1,29 @@
-import type { ReactElement } from 'react'; import { useApp } from '../../app/state';
-export function TuningPanel(): ReactElement { const [state, dispatch] = useApp(); return <aside><h2>調整</h2><label>移調 {state.options.transpose} 半音<input type="range" min="-12" max="12" value={state.options.transpose} onChange={(event) => dispatch({ type: 'options', options: { ...state.options, transpose: Number(event.target.value) } })} /></label><p>推奨: {state.result?.suggestedTranspose ?? 0} 半音</p></aside>; }
+import type { ReactElement } from "react";
+import { useApp } from "../../app/state";
+export function TuningPanel(): ReactElement {
+  const [state, dispatch] = useApp();
+  return (
+    <aside>
+      <h2>調整</h2>
+      <label>
+        移調 {state.options.transpose} 半音
+        <input
+          type="range"
+          min="-12"
+          max="12"
+          value={state.options.transpose}
+          onChange={(event) =>
+            dispatch({
+              type: "options",
+              options: {
+                ...state.options,
+                transpose: Number(event.target.value),
+              },
+            })
+          }
+        />
+      </label>
+      <p>推奨: {state.result?.suggestedTranspose ?? 0} 半音</p>
+    </aside>
+  );
+}
