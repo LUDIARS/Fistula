@@ -13,6 +13,7 @@
 
 **目的**: 好きな曲の音源から「オタマトーンでどこを押さえるか」を自動抽出し、
 音に合わせて練習できるようにする。耳コピ・譜面起こしの手間をゼロにする。
+入力はローカル音声ファイルに加え **YouTube URL** (音声ストリームのみ取得 §4b) を受け付ける。
 
 **重視点 (優先順)**:
 
@@ -35,6 +36,7 @@
 | ピッチ検出 | pitch-detection crate (McLeod) | pure Rust でビルド軽量。単音メロディ用途には十分の見込み |
 | ピッチ検出 fallback | aubio-rs | pitch-detection の精度不足が**実測で確認された場合のみ**導入 (C ビルド依存が重いため) |
 | PDF 出力 | pdf-lib (JS) | フロント側で完結。譜面 Canvas を高解像度ラスタで埋め込む方式 (§9) |
+| YouTube 取得 | yt-dlp (外部バイナリ) | audio-only ストリーム取得の事実上の標準。ユーザ環境にインストール前提、不在なら即エラー (§7.1)。内蔵系 crate (rustube 等) は YT 側変更への追従が死んでおり不採用 |
 
 決定方針: fallback 導入は「精度不足の実測」が条件。先回りで両方入れない (§18 依存最小)。
 
@@ -124,6 +126,48 @@ NoteEvent 列 (移調適用 → ネック位置マッピング §5)
 - 失敗系: ファイル不在 / デコード不能 / 全フレーム無声 (「メロディが検出できない」) は
   それぞれ区別されたエラーで返す (§9 fail-fast)。
 
+## 4b. YouTube 取り込み (音声ストリームのみ)
+
+```
+YouTube URL
+  │ 入口検証: URL 形式 (watch / youtu.be / shorts) + yt-dlp --version 検出
+  │   → yt-dlp 不在なら「yt-dlp をインストールしてください」の明示エラー (§7.1)
+  ▼
+yt-dlp -f "bestaudio[ext=m4a]" --no-playlist -o <cache>/<video_id>.m4a <url>
+  │ 映像は取得しない (audio-only ストリーム)。進捗行を parse して event emit
+  ▼
+キャッシュ済み m4a → 以降はローカルファイルと同じ解析パイプライン (§4)
+```
+
+- **m4a (AAC) を第一選択**にする理由: symphonia がそのままデコードでき、
+  ffmpeg 変換が不要 (外部依存が yt-dlp 1 個で済む)。YouTube はほぼ全動画で
+  m4a audio-only (itag 140) を配信している。m4a が無い動画は
+  「この動画は対応音声形式がありません」の明示エラー (WebM/Opus デコードは §12 将来拡張)。
+- **キャッシュ**: `%LOCALAPPDATA%/Fistula/cache/<video_id>.m4a` + メタ JSON
+  (title, duration)。同一 video_id は再ダウンロードしない。メタは
+  `yt-dlp --print "%(id)s|%(title)s|%(duration)s" --skip-download` で取得。
+- **外部プロセス作法** (規約): shell を介さず引数配列で起動、cwd 明示、
+  exit/error を購読、stderr はログへ (stdout の進捗 parse と混ぜない)。
+  タイムアウト (既定 120s) 超過で kill + エラー。
+- **利用上の注意**: 取得音声はローカルキャッシュのみ・個人練習用途。
+  再配布やエクスポート成果物への音声同梱はしない。YouTube 規約上
+  ダウンロードが制限されるコンテンツの扱いは利用者の責任とし、README に明記する。
+
+### Tauri command
+
+| command | シグネチャ | 説明 |
+|---|---|---|
+| `fetch_youtube_audio` | `(url: String) -> FetchedAudio { path, video_id, title, duration_sec }` | 取得 + キャッシュ。進捗は `fistula://fetch-progress` event |
+
+```rust
+struct FetchedAudio {
+    path: String,       // キャッシュ内 m4a の絶対パス
+    video_id: String,
+    title: String,
+    duration_sec: f64,
+}
+```
+
 ## 5. オタマトーン運指マッピング
 
 - `midi_note` → `neck_pos`: プロファイルの較正点列を線形補間。範囲外は clamp せず
@@ -148,15 +192,16 @@ NoteEvent 列 (移調適用 → ネック位置マッピング §5)
 | `analyze_audio` | `(path: String, options: AnalyzeOptions) -> AnalysisResult` | 解析本体。進捗は event で |
 | `remap_notes` | `(frames: 省略) -> Vec<NoteEvent>` | **設けない**。移調・プロファイル変更の再マッピングは TS 側に同じ純関数を持たず、`analyze_audio` の frames を入力に Rust `remap` を呼ぶ… ではなく、**セグメント済み中間 (量子化前の連続ピッチ区間) を AnalysisResult に含め、TS 側で移調＋位置マッピングを行う** (ロジックは軽い算術のみ。二重実装は移調とマッピングの 2 関数だけに限定し、テストで両者の一致を担保) |
 
-→ 簡潔化のため v1 の command は `analyze_audio` 1 本。音声再生はフロントの
-`<audio>` + `convertFileSrc` で行い、Rust 側は再生に関与しない。
+→ v1 の command は `analyze_audio` + `fetch_youtube_audio` (§4b) の 2 本。
+音声再生はフロントの `<audio>` + `convertFileSrc` で行い、Rust 側は再生に関与しない
+(YouTube 取り込み後もキャッシュ m4a を同様に再生する。ストリーミング再生はしない)。
 
 ## 8. フロントエンド設計
 
 ### 画面フロー
 
 ```
-[Import 画面] --ファイル選択/D&D--> [解析中 (進捗バー)] --> [Player 画面]
+[Import 画面] --ファイル選択/D&D or YouTube URL 貼付--> [取得/解析中 (進捗バー)] --> [Player 画面]
                                                               ├─ 演奏ビュー (スクロール譜面)
                                                               ├─ 調整パネル (移調/しきい値→再解析)
                                                               └─ エクスポート (PNG/PDF)
@@ -198,6 +243,8 @@ src-tauri/src/
   commands.rs             # analyze_audio command (入口検証 + 進捗 emit)
   model.rs                # §3 のドメイン型 + serde
   audio/decode.rs         # symphonia デコード + mono ミックスダウン
+  ingest/youtube.rs       # yt-dlp 起動・進捗 parse・メタ取得 (§4b)
+  ingest/cache.rs         # video_id キャッシュの配置・ヒット判定
   analysis/framing.rs     # フレーム分割 + 窓関数
   analysis/pitch.rs       # McLeod ピッチ推定 + clarity/rms フィルタ
   analysis/postprocess.rs # メディアン/オクターブ補正/量子化/セグメンテーション
@@ -206,7 +253,7 @@ src-tauri/src/
 
 src/
   app/                    # ルート・画面フロー・Context/Reducer
-  features/import/        # ファイル選択・D&D・解析呼び出し
+  features/import/        # ファイル選択・D&D・YouTube URL 入力・取得/解析呼び出し
   features/player/        # 演奏ビュー (Canvas 描画・再生同期・ループ/速度)
   features/tuning/        # 移調・パラメータ調整パネル
   features/export/        # PNG/PDF エクスポート
@@ -229,6 +276,9 @@ src/
 ## 12. 将来拡張 (v1 スコープ外)
 
 - マイク入力のリアルタイムピッチ判定 (採点・チューナー)
+- WebM/Opus 音声のデコード対応 (m4a が無い動画向け。symphonia-format-mkv +
+  libopus バインディング、または ffmpeg 検出時のみの変換経路)
+- YouTube キャッシュの容量上限・LRU 削除
 - ボーカル/メロディのステム分離 (現状は「メロディが主役の音源を入れる」運用)
 - 実機較正ウィザード (マイクで実機音を拾って calibration 点列を作る)
 - aubio-rs 導入 (pitch-detection の精度不足が実測された場合)
@@ -243,6 +293,8 @@ src/
 | D4 | 時刻源は audio.currentTime 一本 | 自前クロック補正 | 二重管理はズレの温床。要件 ±30ms は currentTime 直読みで達成可 |
 | D5 | 再マッピングは TS 側軽量関数 | 毎回 Rust 呼び出し | 移調スライダの即時反映 (ドラッグ中連続更新) を IPC 往復なしで実現。一致はゴールデンテストで担保 |
 | D6 | 状態管理は React 標準のみ | zustand 等 | 画面 3 つ規模に外部依存不要 (§18) |
+| D7 | YouTube 取得は yt-dlp 外部バイナリ | rustube 等内蔵 crate / ffmpeg 同梱 | YT 側仕様変更に追従しているのは yt-dlp のみ。不在時は即エラーで無言劣化しない (§7.1) |
+| D8 | audio-only は m4a (AAC) 第一選択 | WebM/Opus デコード / ffmpeg で wav 変換 | symphonia が直接デコード可能で追加依存ゼロ・実装最速。ほぼ全動画で配信されており達成度も十分。無い動画は明示エラー→将来拡張 (§12) |
 
 ## 14. 開発フロー上の注意
 
