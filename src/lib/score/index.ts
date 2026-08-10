@@ -1,0 +1,62 @@
+export interface ScoreNote {
+  startSec: number;
+  durationSec: number;
+  midiNote: number;
+  centsOffset: number;
+  neckPos: number;
+}
+export interface Profile {
+  midiMin: number;
+  midiMax: number;
+  calibration: [number, number][];
+}
+export function neckPosition(
+  profile: Profile,
+  midiNote: number,
+): number | null {
+  if (midiNote < profile.midiMin || midiNote > profile.midiMax) return null;
+  const exact = profile.calibration.find(([note]) => note === midiNote);
+  if (exact) return exact[1];
+  for (let index = 1; index < profile.calibration.length; index += 1) {
+    const [leftNote, leftPos] = profile.calibration[index - 1];
+    const [rightNote, rightPos] = profile.calibration[index];
+    if (midiNote > leftNote && midiNote < rightNote)
+      return (
+        leftPos +
+        ((rightPos - leftPos) * (midiNote - leftNote)) / (rightNote - leftNote)
+      );
+  }
+  return null;
+}
+const NOTE_NAMES = [
+  "C",
+  "C#",
+  "D",
+  "D#",
+  "E",
+  "F",
+  "F#",
+  "G",
+  "G#",
+  "A",
+  "A#",
+  "B",
+] as const;
+
+/** MIDI ノート番号を "A4" 形式の音名にする (69 → A4)。 */
+export function midiNoteName(midiNote: number): string {
+  const clamped = Math.max(0, Math.min(127, Math.round(midiNote)));
+  return `${NOTE_NAMES[clamped % 12]}${Math.floor(clamped / 12) - 1}`;
+}
+
+export function remapNotes(
+  notes: ScoreNote[],
+  transpose: number,
+  profile: Profile,
+): ScoreNote[] {
+  return notes.flatMap((note) => {
+    const midiNote = Math.max(0, Math.min(127, note.midiNote + transpose));
+    const neckPos = neckPosition(profile, midiNote);
+    return neckPos === null ? [] : [{ ...note, midiNote, neckPos }];
+  });
+}
