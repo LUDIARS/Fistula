@@ -1,0 +1,14 @@
+{
+  "name": "score-generation",
+  "description": "運指譜の生成。 楽曲解析の結果をオタマトーンの運指へ変換する。",
+  "presetRules": [],
+  "templateRules": [],
+  "membership": [
+    {
+      "pathPattern": "(^|/)src/features/(?:.*/)?[^/]+$"
+    },
+    {
+      "pathPattern": "(^|/)src/lib/(?:.*/)?[^/]+$"
+    }
+  ]
+}

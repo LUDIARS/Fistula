@@ -30,3 +30,6 @@ src-tauri/target/
 *.njsproj
 *.sln
 *.sw?
+
+# Anatomia のローカル状態 (ドメイン定義の正本は spec/domains/)
+.anatomia/

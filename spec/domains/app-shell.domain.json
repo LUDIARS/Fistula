@@ -1,0 +1,20 @@
+{
+  "name": "app-shell",
+  "description": "アプリの器。 画面の組み立て、 資産、 起動と配線。",
+  "presetRules": [],
+  "templateRules": [],
+  "membership": [
+    {
+      "pathPattern": "(^|/)src/app/(?:.*/)?[^/]+$"
+    },
+    {
+      "pathPattern": "(^|/)src/assets/(?:.*/)?[^/]+$"
+    },
+    {
+      "pathPattern": "(^|/)src/[^/]+$"
+    },
+    {
+      "pathPattern": "(^|/)tests?/(?:.*/)?[^/]+$"
+    }
+  ]
+}

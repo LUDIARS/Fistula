@@ -1,0 +1,12 @@
+{
+  "name": "repository-tooling",
+  "description": "リポジトリ自身を検査・維持するための道具。 製品の実行には関わらず、 定義や設定が壊れていないことを確かめる。",
+  "presetRules": [],
+  "templateRules": [],
+  "membership": [
+    {
+      "pathPattern": "(^|/)scripts/(?:.*/)?[^/]+$"
+    }
+  ],
+  "cardTemplate": "Summarise repository-tooling: the checks that keep the repository's own definitions and settings valid."
+}
